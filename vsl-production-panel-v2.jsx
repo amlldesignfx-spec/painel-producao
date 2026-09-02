@@ -4,7 +4,7 @@ import {
   Layers, Radio, Clock, CircleDot, CheckCircle2, ArrowRightLeft, Search,
   Film, ArrowUpCircle, ArrowDownCircle, Zap, Copy, Check, History, FlaskConical,
   ExternalLink, LayoutDashboard, Bell, Menu, TrendingUp, Sparkles, Activity,
-  ChevronLeft
+  ChevronLeft, BadgeCheck
 } from "lucide-react";
 
 /* ---------- Design tokens (Marko template, purple -> red) ---------- */
@@ -22,6 +22,7 @@ const C = {
   glow: "rgba(229,56,59,0.44)",
   gold: "#EFBC2A",
   ok: "#3DDC84",
+  aprovado: "#6EA8FE",
 };
 
 const FONT = "'Plus Jakarta Sans', ui-sans-serif, system-ui, -apple-system, sans-serif";
@@ -30,8 +31,18 @@ const STATUS = {
   a_editar: { label: "A editar", color: "#E5383B", Icon: Clock },
   em_edicao: { label: "Em edição", color: C.gold, Icon: CircleDot },
   editado: { label: "Editado", color: C.ok, Icon: CheckCircle2 },
+  aprovado: { label: "Aprovado", color: C.aprovado, Icon: BadgeCheck },
 };
-const STATUS_ORDER = ["a_editar", "em_edicao", "editado"];
+const STATUS_ORDER = ["a_editar", "em_edicao", "editado", "aprovado"];
+// status desconhecido (base antiga/nova aberta num bundle velho) nao pode quebrar a tela
+const statusInfo = (s) => STATUS[s] || STATUS.a_editar;
+// material pronto pra entrar num slot do Funil Atual: editado ou ja aprovado
+const isPronto = (s) => s === "editado" || s === "aprovado";
+// "aprovado 02/09 por GAB" — data e responsavel sao opcionais
+const aprovacaoLabel = (item) =>
+  "aprovado"
+  + (item.aprovadoEm ? ` ${new Date(item.aprovadoEm + "T00:00:00").toLocaleDateString("pt-BR")}` : "")
+  + (item.aprovadoPor ? ` por ${item.aprovadoPor}` : "");
 
 const TYPE_LABEL = { vsl: "Corpo VSL", lead: "Lead", upsell: "Upsell", downsell: "Downsell", obrigado: "Obrigado" };
 const TYPE_ICON = { vsl: Film, lead: Zap, upsell: ArrowUpCircle, downsell: ArrowDownCircle, obrigado: Sparkles };
@@ -69,9 +80,10 @@ function officialName(item, items, experts) {
   if (item.type === "vsl") {
     return `VSL_${funil}_V${item.versao || "?"}_${pair(item.editor, item.copy)}`;
   }
-  // Lead: VSL_[FUNIL]_V[versão]_LEAD[nº]_[EDITOR LEAD]-[COPY LEAD]
-  // (só quem fez a lead — o editor/copy do corpo não entra no nome)
-  return `VSL_${funil}_V${item.versao || "?"}_LEAD${item.leadNum || "?"}_${pair(item.editor, item.copy)}`;
+  // Lead: LEAD_[nº]_[FUNIL]_V[versão]_[EDITOR LEAD]-[COPY LEAD]
+  // a versão entra porque a mesma lead às vezes é regravada noutro ambiente,
+  // e é a versão que separa uma regravação da outra
+  return `LEAD_${item.leadNum || "?"}_${funil}_V${item.versao || "?"}_${pair(item.editor, item.copy)}`;
 }
 
 /* Rótulo curto de um item para histórico/testes */
@@ -242,7 +254,7 @@ function Pill({ active, children, onClick, Icon }) {
 }
 
 function StatusBadge({ status }) {
-  const s = STATUS[status];
+  const s = statusInfo(status);
   const Icon = s.Icon;
   return (
     <span className="inline-flex items-center gap-1 text-[10.5px] font-bold uppercase tracking-wide px-2 py-0.5 rounded-full" style={{ color: s.color, background: `${s.color}18`, border: `1px solid ${s.color}40` }}>
@@ -638,7 +650,7 @@ function ItemModal({ initial, experts, items, onSave, onClose }) {
           </Section>
 
           <Section label="Status & prazo">
-            <div className="flex items-center gap-1.5 mb-3">
+            <div className="flex items-center gap-1.5 flex-wrap mb-3">
               {STATUS_ORDER.map((s) => {
                 const st = STATUS[s];
                 const Icon = st.Icon;
@@ -646,7 +658,11 @@ function ItemModal({ initial, experts, items, onSave, onClose }) {
                 return (
                   <button
                     key={s}
-                    onClick={() => setForm((f) => ({ ...f, status: s }))}
+                    onClick={() => setForm((f) => (s === "aprovado"
+                      // ao aprovar, ja preenche a data de hoje
+                      ? { ...f, status: s, aprovadoEm: f.aprovadoEm || todayISO() }
+                      // saiu de aprovado: a aprovacao anterior nao vale mais, limpa o registro
+                      : { ...f, status: s, aprovadoEm: "", aprovadoPor: "" }))}
                     className="flex items-center gap-1.5 text-[12px] font-semibold px-3 py-1.5 rounded-full"
                     style={active ? { background: `${st.color}1F`, color: st.color, border: `1px solid ${st.color}55` } : { background: "rgba(255,255,255,0.03)", color: C.text, border: "1px solid rgba(255,255,255,0.08)" }}
                   >
@@ -655,6 +671,12 @@ function ItemModal({ initial, experts, items, onSave, onClose }) {
                 );
               })}
             </div>
+            {form.status === "aprovado" && (
+              <div className="grid grid-cols-2 gap-3 mb-3">
+                <Field label="Aprovado em"><input type="date" style={inputStyle} value={form.aprovadoEm || ""} onChange={set("aprovadoEm")} /></Field>
+                <Field label="Aprovado por"><input style={inputStyle} value={form.aprovadoPor || ""} onChange={set("aprovadoPor")} placeholder="GAB" /></Field>
+              </div>
+            )}
             <div className="grid grid-cols-2 gap-3">
               <Field label="Data de início"><input type="date" style={inputStyle} value={form.dataInicio} onChange={set("dataInicio")} /></Field>
               <Field label="Data de entrega"><input type="date" style={inputStyle} value={form.dataEntrega} onChange={set("dataEntrega")} /></Field>
@@ -706,7 +728,7 @@ function ItemCard({ item, allItems, experts, onEdit, onDelete }) {
   const isTsl = item.type === "downsell" && item.tipo === "tsl";
   const isOferta = isOfertaType(item.type);
   const hasLinks = item.linkBruto || item.linkCopy || item.linkEditado || item.linkPagina;
-  const s = STATUS[item.status];
+  const s = statusInfo(item.status);
   const linked = temPosicaoType(item.type) && item.posicao === "2" && item.associar && item.associadoId
     ? allItems?.find((i) => i.id === item.associadoId)
     : null;
@@ -721,6 +743,7 @@ function ItemCard({ item, allItems, experts, onEdit, onDelete }) {
   const dates = (item.dataInicio ? new Date(item.dataInicio + "T00:00:00").toLocaleDateString("pt-BR") : "")
     + (item.dataInicio && item.dataEntrega ? " → " : "")
     + (item.dataEntrega ? new Date(item.dataEntrega + "T00:00:00").toLocaleDateString("pt-BR") : "");
+  const aprovacao = item.status === "aprovado" ? aprovacaoLabel(item) : "";
 
   return (
     <div
@@ -747,6 +770,7 @@ function ItemCard({ item, allItems, experts, onEdit, onDelete }) {
         <p className="text-[11px] truncate mt-0.5" style={{ color: C.dim }}>
           {who}
           {dates && <span> · {dates}</span>}
+          {aprovacao && <span style={{ color: C.aprovado }}> · {aprovacao}</span>}
           {isOferta && item.contexto && (
             <span className="italic" title={item.contexto}> · “{item.contexto}”</span>
           )}
@@ -815,10 +839,10 @@ function TypeBlock({ title, Icon, items, allItems, experts, onEdit, onDelete, em
 
 /* ---------- Status summary ---------- */
 function StatusSummary({ items }) {
-  const counts = { a_editar: 0, em_edicao: 0, editado: 0 };
+  const counts = { a_editar: 0, em_edicao: 0, editado: 0, aprovado: 0 };
   items.forEach((it) => { counts[it.status] = (counts[it.status] || 0) + 1; });
   return (
-    <div className="grid grid-cols-3 gap-2.5 mb-5">
+    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 mb-5">
       {STATUS_ORDER.map((k) => {
         const s = STATUS[k];
         const Icon = s.Icon;
@@ -841,7 +865,7 @@ function StatusSummary({ items }) {
 /* ---------- Expert overview card (for Geral) ---------- */
 function ExpertOverviewCard({ expert, items, onOpen }) {
   const mine = items.filter((i) => i.expertId === expert.id);
-  const counts = { a_editar: 0, em_edicao: 0, editado: 0 };
+  const counts = { a_editar: 0, em_edicao: 0, editado: 0, aprovado: 0 };
   mine.forEach((it) => { counts[it.status] = (counts[it.status] || 0) + 1; });
   const total = mine.length;
   const initials = expert.name.split(/\s+/).map((p) => p[0]).slice(0, 2).join("").toUpperCase();
@@ -870,7 +894,7 @@ function ExpertOverviewCard({ expert, items, onOpen }) {
               <span key={k} style={{ width: `${(counts[k] / total) * 100}%`, background: STATUS[k].color }} />
             ))}
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-x-3 gap-y-1 flex-wrap">
             {STATUS_ORDER.map((k) => (
               <span key={k} className="flex items-center gap-1.5 text-[11px] font-semibold" style={{ color: counts[k] ? STATUS[k].color : "#3E3E3E" }}>
                 <span className="w-1.5 h-1.5 rounded-full" style={{ background: counts[k] ? STATUS[k].color : "#3E3E3E" }} />
@@ -890,11 +914,13 @@ function ExpertOverviewCard({ expert, items, onOpen }) {
 function ProducaoTab({ items, experts, globalSearch, onAdd, onEdit, onDelete, onNewExpert, onEditExpert }) {
   const [view, setView] = useState("geral"); // 'geral' | expertId
   const [typeFilter, setTypeFilter] = useState("todos");
+  const [statusFilter, setStatusFilter] = useState("todos");
   const [localQ, setLocalQ] = useState("");
   const q = localQ || globalSearch || "";
 
   const matchesFilters = (it) => {
     if (typeFilter !== "todos" && it.type !== typeFilter) return false;
+    if (statusFilter !== "todos" && it.status !== statusFilter) return false;
     if (q) {
       const funil = funilName(experts, it.funilId);
       const expert = experts.find((e) => e.id === it.expertId);
@@ -995,6 +1021,10 @@ function ProducaoTab({ items, experts, globalSearch, onAdd, onEdit, onDelete, on
           <option value="downsell">Downsell</option>
           <option value="obrigado">Obrigado</option>
         </select>
+        <select style={selectStyle} value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+          <option value="todos">Todos os status</option>
+          {STATUS_ORDER.map((s) => <option key={s} value={s}>{STATUS[s].label}</option>)}
+        </select>
       </div>
 
       {view === "geral" ? (
@@ -1077,7 +1107,7 @@ function PaginaField({ item, onSetPagina }) {
   );
 }
 
-function SlotPicker({ label, num, slotKey, funilId, current, eligible, all, multi, onChange, onRename, autoLabel, onSetPagina }) {
+function SlotPicker({ label, num, slotKey, funilId, current, eligible, all, experts, multi, onChange, onRename, autoLabel, onSetPagina }) {
   const [open, setOpen] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [nameDraft, setNameDraft] = useState(label);
@@ -1155,8 +1185,8 @@ function SlotPicker({ label, num, slotKey, funilId, current, eligible, all, mult
           {selectedItems.map((it) => (
             <div key={it.id} className="px-2 py-1.5 rounded-lg" style={{ background: C.accentSoft, color: C.primary }}>
               <div className="flex items-center justify-between text-[11.5px]">
-                <span className="truncate">
-                  {it.type === "lead" ? `Lead #${it.leadNum} V${it.versao || "?"}` : it.produto ? `${it.produto} V${it.versao}` : `V${it.versao}`}
+                <span className="truncate" title={officialName(it, all || [], experts || [])}>
+                  {officialName(it, all || [], experts || [])}
                 </span>
                 <span className="flex items-center gap-1.5 ml-1 shrink-0">
                   {it.linkBruto && (
@@ -1191,8 +1221,8 @@ function SlotPicker({ label, num, slotKey, funilId, current, eligible, all, mult
               className="w-full text-left text-[11.5px] px-2 py-1.5 rounded-lg mb-0.5 flex items-center justify-between"
               style={{ background: currentIds.includes(it.id) ? C.accentSoft : "transparent", color: currentIds.includes(it.id) ? C.accent : C.text }}
             >
-              <span className="truncate">
-                {it.type === "lead" ? `Lead #${it.leadNum} V${it.versao || "?"} (${it.editor})` : it.produto ? `${it.produto} V${it.versao} (${it.editor || it.copy})` : `V${it.versao} (${it.editor})`}
+              <span className="truncate" title={officialName(it, all || [], experts || [])}>
+                {officialName(it, all || [], experts || [])}
               </span>
               {currentIds.includes(it.id) && <CheckCircle2 size={12} />}
             </button>
@@ -1261,7 +1291,7 @@ function logAction(l) {
 }
 
 function FunilAtualTab({ experts, items, funilState, setFunilState, slotLog, setSlotLog, onSetPagina }) {
-  const editado = items.filter((i) => i.status === "editado");
+  const editado = items.filter((i) => isPronto(i.status));
   const [histOpen, setHistOpen] = useState({});
 
   // cards de um funil: usa o layout salvo, migra o formato antigo ou cai no padrão
@@ -1444,7 +1474,7 @@ function FunilAtualTab({ experts, items, funilState, setFunilState, slotLog, set
                   <div className="flex items-stretch gap-1.5 flex-wrap">
                     {slots.map((s, i) => (
                       <div key={s.id} className="flex-1 min-w-[150px] flex flex-col gap-1">
-                        <SlotPicker label={s.name || labels[i]} autoLabel={labels[i]} num={i + 1} multi={s.kind === "lead"} current={s.value} eligible={eligibleFor(s)} all={items} onChange={(v) => updateSlotValue(f.id, s.id, v)} onRename={(name) => updateSlotName(f.id, s.id, name, labels[i])} onSetPagina={onSetPagina} />
+                        <SlotPicker label={s.name || labels[i]} autoLabel={labels[i]} num={i + 1} multi={s.kind === "lead"} current={s.value} eligible={eligibleFor(s)} all={items} experts={experts} onChange={(v) => updateSlotValue(f.id, s.id, v)} onRename={(name) => updateSlotName(f.id, s.id, name, labels[i])} onSetPagina={onSetPagina} />
                         <div className="flex items-center justify-center gap-0.5 opacity-40 hover:opacity-100 transition-opacity">
                           <button onClick={() => moveSlot(f.id, s.id, -1)} disabled={i === 0} title="Mover para a esquerda" className="p-1 rounded-md hover:bg-white/10 disabled:opacity-30"><ChevronLeft size={12} color={C.text} /></button>
                           <button onClick={() => removeSlot(f.id, s.id)} title="Remover card" className="p-1 rounded-md hover:bg-white/10"><Trash2 size={11} color={C.text} /></button>
@@ -1893,13 +1923,13 @@ function KpiCard({ label, value, sub, Icon, color, bars }) {
 
 /* ---------- Dashboard (visão inicial estilo SaaS) ---------- */
 function DashboardTab({ items, experts, tests, funilState, onGo, onAdd }) {
-  const editados = items.filter((i) => i.status === "editado").length;
-  const emEdicao = items.filter((i) => i.status === "em_edicao").length;
-  const aEditar = items.filter((i) => i.status === "a_editar").length;
+  const porStatus = { a_editar: 0, em_edicao: 0, editado: 0, aprovado: 0 };
+  items.forEach((i) => { if (porStatus[i.status] !== undefined) porStatus[i.status] += 1; });
+  const { editado: editados, aprovado: aprovados, em_edicao: emEdicao, a_editar: aEditar } = porStatus;
   const rodando = (tests || []).filter((t) => t.status === "rodando").length;
   const totalFunis = experts.reduce((n, e) => n + e.funis.length, 0);
   const noAr = Object.values(funilState || {}).filter((s) => s && (s.corpo || (s.leads || []).length)).length;
-  const pct = items.length ? Math.round((editados / items.length) * 100) : 0;
+  const prontos = editados + aprovados;
 
   // atividade recente = itens ordenados por data de entrega/início
   const recent = [...items]
@@ -1911,7 +1941,7 @@ function DashboardTab({ items, experts, tests, funilState, onGo, onAdd }) {
   return (
     <div className="flex flex-col gap-5">
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <KpiCard label="Materiais editados" value={editados} sub={`${pct}% do total`} Icon={CheckCircle2} color={C.ok} bars={bars(3)} />
+        <KpiCard label="Materiais editados" value={prontos} sub={`${aprovados} aprovados · ${editados} a revisar`} Icon={CheckCircle2} color={C.ok} bars={bars(3)} />
         <KpiCard label="Em produção" value={emEdicao + aEditar} sub={`${emEdicao} em edição · ${aEditar} a editar`} Icon={Activity} color={C.gold} bars={bars(5)} />
         <KpiCard label="Funis no ar" value={`${noAr}/${totalFunis}`} sub="rodando agora" Icon={Radio} color={C.accent} bars={bars(2)} />
         <KpiCard label="Testes rodando" value={rodando} sub={`${(tests || []).length} no total`} Icon={FlaskConical} color="#6EA8FE" bars={bars(4)} />
@@ -1928,7 +1958,7 @@ function DashboardTab({ items, experts, tests, funilState, onGo, onAdd }) {
             <div className="px-4 py-8 text-center text-[12px]" style={{ color: "#454545" }}>nada cadastrado ainda</div>
           ) : (
             recent.map((it) => {
-              const s = STATUS[it.status];
+              const s = statusInfo(it.status);
               const Icon = s.Icon;
               const label = it.type === "lead" ? `Lead #${it.leadNum || "?"}` : it.type === "vsl" ? `Corpo V${it.versao || "?"}` : (it.produto || "sem produto");
               return (
@@ -1949,19 +1979,18 @@ function DashboardTab({ items, experts, tests, funilState, onGo, onAdd }) {
         <div className="flex flex-col gap-3">
           <div className="rounded-2xl p-4" style={{ background: C.card, border: `1px solid ${C.cardBorder}` }}>
             <h3 className="text-[13px] font-bold mb-3" style={{ color: C.primary }}>Saúde da produção</h3>
-            {[["editado", editados], ["em_edicao", emEdicao], ["a_editar", aEditar]].map(([k, n]) => (
+            {["aprovado", "editado", "em_edicao", "a_editar"].map((k) => (
               <div key={k} className="flex items-center gap-2 mb-2">
                 <span className="w-2 h-2 rounded-full shrink-0" style={{ background: STATUS[k].color }} />
                 <span className="text-[12px] flex-1" style={{ color: C.text }}>{STATUS[k].label}</span>
-                <span className="text-[12px] font-bold" style={{ color: C.primary }}>{n}</span>
-                <span className="text-[11px] w-9 text-right" style={{ color: C.dim }}>{items.length ? Math.round((n / items.length) * 100) : 0}%</span>
+                <span className="text-[12px] font-bold" style={{ color: C.primary }}>{porStatus[k]}</span>
+                <span className="text-[11px] w-9 text-right" style={{ color: C.dim }}>{items.length ? Math.round((porStatus[k] / items.length) * 100) : 0}%</span>
               </div>
             ))}
             <div className="flex h-2 rounded-full overflow-hidden mt-3" style={{ background: "rgba(255,255,255,0.06)" }}>
-              {STATUS_ORDER.map((k) => {
-                const n = k === "editado" ? editados : k === "em_edicao" ? emEdicao : aEditar;
-                return items.length ? <span key={k} style={{ width: `${(n / items.length) * 100}%`, background: STATUS[k].color }} /> : null;
-              })}
+              {STATUS_ORDER.map((k) => (
+                items.length ? <span key={k} style={{ width: `${(porStatus[k] / items.length) * 100}%`, background: STATUS[k].color }} /> : null
+              ))}
             </div>
           </div>
 
